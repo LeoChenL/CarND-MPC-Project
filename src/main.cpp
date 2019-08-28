@@ -45,32 +45,78 @@ int main() {
           vector<double> ptsy = j[1]["ptsy"];
           double px = j[1]["x"];
           double py = j[1]["y"];
-          double psi = j[1]["psi"];
-          double v = j[1]["speed"];
-
+          double psi = j[1]["psi"]; // radians
+          double v = j[1]["speed"]; // mph
+          double delta = j[1]["steering_angle"];
+          double throttle = j[1]["throttle"];
           /**
            * TODO: Calculate steering angle and throttle using MPC.
            * Both are in between [-1, 1].
            */
-          double steer_value;
-          double throttle_value;
+
+          // System Delay
+          doubel delay = 100/1000; // seconds
+          doubel Lf = 2.67;
+
+          double delayed_px  = px + v * cos(psi) * delay;
+          double delayed_py  = py + v * sin(psi) * delay;
+          double delayed_psi = psi + (v * tan(-delta) / Lf) * delay +
+                              ( (throttle * tan(-delta) / (2*Lf)) * pow(delay,2) );
+          double delayed_v = v + throttle * delay;
+
+          // Transform from map coordinate to vehicle coordinate
+          int num_points = ptsx.size();
+          Eigen::VectorXd points_px(num_points);
+          Eigen::VectorXd points_py(num_points);
+
+          for (int i=0; i<num_points; ++i){
+            doubel delta_px = ptsx[i] - delayed_px;
+            doubel delta_py = ptsy[i] - delayed_py;
+
+            points_px[i] = delta_px * cos(-delayed_psi) - delta_py * sin(-delayed_psi);
+            points_py[i] = delta_py * cos(-delayed_psi) + delta_px * sin(-delayed_psi);
+          }
+
+          // Polynomials coefficients
+          auto coeffs = polyfit(points_px, points_py, 3);
+          // State
+          double cte = polyeval(coeffs, 0);
+          double epsi = -atan(coeffs[1])
+          Eigen::VectorXd state(6);
+          state << 0, 0, 0, v, cte, epsi;
+
+          // Calculate the best acutation
+          auto vars = mpc.Solve(state, coeffs);
+          double steer_value = -vars[0] / deg2rad(25);
+          double throttle_value = vars[1];
 
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the 
-          //   steering value back. Otherwise the values will be in between 
+          // NOTE: Remember to divide by deg2rad(25) before you send the
+          //   steering value back. Otherwise the values will be in between
           //   [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          // Display the MPC predicted trajectory 
+          // Display the MPC predicted trajectory
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
 
           /**
-           * TODO: add (x,y) points to list here, points are in reference to 
-           *   the vehicle's coordinate system the points in the simulator are 
+           * TODO: add (x,y) points to list here, points are in reference to
+           *   the vehicle's coordinate system the points in the simulator are
            *   connected by a Green line
            */
+          auto N = (vars.size()-2)/2;
+
+          doubel temp_x;
+          doubel temp_y;
+
+          for(int i=3; i<N+2; ++i){
+            temp_x = vars[i];
+            temp_y = vars[i+N];
+            mpc_x_vals.push_back(temp_x);
+            mpc_y_vals.push_back(temp_y);
+          }
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
@@ -80,10 +126,15 @@ int main() {
           vector<double> next_y_vals;
 
           /**
-           * TODO: add (x,y) points to list here, points are in reference to 
-           *   the vehicle's coordinate system the points in the simulator are 
+           * TODO: add (x,y) points to list here, points are in reference to
+           *   the vehicle's coordinate system the points in the simulator are
            *   connected by a Yellow line
            */
+         for (int i = 0; i < points_px.size(); i++)
+         {
+           next_x_vals.push_back(points_px[i]);
+           next_y_vals.push_back(points_py[i]);
+         }
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
@@ -127,6 +178,6 @@ int main() {
     std::cerr << "Failed to listen to port" << std::endl;
     return -1;
   }
-  
+
   h.run();
 }
